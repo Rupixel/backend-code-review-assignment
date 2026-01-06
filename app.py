@@ -67,3 +67,93 @@ def create_product():
         "message": "Product created successfully",
         "product_id": product.id
     }), 201
+
+##API Endpoint code
+@app.route('/api/products', methods=['POST'])
+def create_product():
+    ...
+    return jsonify({...}), 201
+
+
+# -------------------------------
+# Low stock alerts API
+# -------------------------------
+
+from datetime import datetime, timedelta
+from flask import jsonify
+
+@app.route('/api/companies/<int:company_id>/alerts/low-stock', methods=['GET'])
+def low_stock_alerts(company_id):
+    alerts = []
+
+    # Fetch warehouses for the company
+    warehouses = Warehouse.query.filter_by(company_id=company_id).all()
+    if not warehouses:
+        return jsonify({"alerts": [], "total_alerts": 0}), 200
+
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+
+    for warehouse in warehouses:
+        inventories = Inventory.query.filter_by(warehouse_id=warehouse.id).all()
+
+        for inventory in inventories:
+            product = Product.query.get(inventory.product_id)
+
+            # Skip if product is missing
+            if not product:
+                continue
+
+            # Get low-stock threshold (assumed per product type)
+            threshold = product.low_stock_threshold
+
+            if inventory.quantity >= threshold:
+                continue
+
+            # Check recent sales activity
+            recent_sales = Sale.query.filter(
+                Sale.product_id == product.id,
+                Sale.created_at >= thirty_days_ago
+            ).count()
+
+            if recent_sales == 0:
+                continue
+
+            # Calculate average daily sales
+            avg_daily_sales = recent_sales / 30
+            if avg_daily_sales == 0:
+                continue
+
+            days_until_stockout = int(inventory.quantity / avg_daily_sales)
+
+            # Fetch supplier info
+            supplier_link = SupplierProduct.query.filter_by(
+                product_id=product.id
+            ).first()
+
+            supplier_data = None
+            if supplier_link:
+                supplier = Supplier.query.get(supplier_link.supplier_id)
+                if supplier:
+                    supplier_data = {
+                        "id": supplier.id,
+                        "name": supplier.name,
+                        "contact_email": supplier.contact_email
+                    }
+
+            alerts.append({
+                "product_id": product.id,
+                "product_name": product.name,
+                "sku": product.sku,
+                "warehouse_id": warehouse.id,
+                "warehouse_name": warehouse.name,
+                "current_stock": inventory.quantity,
+                "threshold": threshold,
+                "days_until_stockout": days_until_stockout,
+                "supplier": supplier_data
+            })
+
+    return jsonify({
+        "alerts": alerts,
+        "total_alerts": len(alerts)
+    }), 200
+
